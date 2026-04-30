@@ -17,4 +17,7 @@ __pycache__/
 .ipynb_checkpoints/
 
 # Dataset
-data/dataset/
+data/raw
+
+#tutte le png
+*.png

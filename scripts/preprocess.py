@@ -7,9 +7,14 @@ from torch.utils.data import DataLoader
 from data.dataset import MayoDataset
 from data.preprocessing import get_transform
 
-DATASET_PATH = "../data/dataset"
+DATASET_PATH = "data/raw"
 
-all_images = glob(os.path.join(DATASET_PATH, "*.png"))
+all_images = glob(
+    os.path.join(DATASET_PATH, "**", "*.png"),
+    recursive=True
+)
+
+print("Found images:", len(all_images))
 
 train_images, temp_images = train_test_split(
     all_images,
