@@ -1,7 +1,16 @@
-# Normalization, resizing to 256x256, transforming in tensor
+
+"""
+preprocessing.py 
+
+It contains the function that perform the initial preprocessing: 
+- Shape resize to 256 * 256, dimension necessary for the generation method 
+- Normalization between [0., 1.]
+
+"""
 from torchvision import transforms
 
 def get_transform(image_size=256):
+    """ Performs resize and normalization of the images """
     transform = transforms.Compose([
         transforms.Resize((image_size, image_size)), #interpolation: BILINEAR
         transforms.ToTensor() #returns a tensor like [channel, H, W] with values [0.,1.]
