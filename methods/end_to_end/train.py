@@ -1,1 +1,197 @@
-# Training loop — targets are TV outputs
+"""
+Training loop for CT reconstruction using UNet
+
+Usage: 
+    python train.py --fbp_dir data/fbp/angle_090 --tv_dir data/tv/angle_090 #poi cata sono da cambiare ovviamente
+"""
+
+import argparse
+import os 
+import time 
+import json 
+
+import torch 
+import torch.nn as nn
+from torch.optim import Adam
+from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.utils.data import DataLoader
+
+from unet import UNet
+from dataset import get_dataloaders
+from losses import MixedLoss
+
+from ... evaluation.metrics import SSIM, PSNR
+from utilities import *
+from dataset import *
+
+
+
+
+def train(
+    model: nn.Module,
+    train_loader: DataLoader,
+    val_loader: DataLoader,
+    optimizer: torch.optim.Optimizer,
+    loss_fn=nn.L1Loss(), 
+    n_epochs: int = 50,
+    save_each: int | None = None,
+    weights_path: str | None = None,
+    device: str = "cpu",
+) -> dict:
+    r"""
+    Train a given pytorch model on an input training set, tracking validation metrics.
+    Saves the best model based on validation loss.
+    """
+    print(f"Training NN model for {n_epochs} epochs on {device}.")
+    
+    loss_history = {"train": [], "val": []}
+    ssim_history = {"train": [], "val": []}
+    
+    best_val_loss = float('inf')
+
+    for epoch in range(n_epochs):
+        
+        model.train()
+        epoch_train_loss = 0.0
+        epoch_train_ssim = 0.0
+        start_time = time.time()
+        
+        for t, (x, y) in enumerate(train_loader):
+            x, y = x.to(device), y.to(device)
+
+            optimizer.zero_grad()
+            y_pred = model(x)
+            
+            # Calcolo Loss
+            loss = loss_fn(y_pred, y)
+            loss.backward()
+            optimizer.step()
+
+            epoch_train_loss += loss.item()
+            epoch_train_ssim += SSIM(y_pred.cpu().detach(), y.cpu().detach())
+
+        avg_train_loss = epoch_train_loss / len(train_loader)
+        avg_train_ssim = epoch_train_ssim / len(train_loader)
+        
+        # --- VALIDATION PHASE ---
+        model.eval()
+        epoch_val_loss = 0.0
+        epoch_val_ssim = 0.0
+        
+        with torch.no_grad():
+            for v, (x_val, y_val) in enumerate(val_loader):
+                x_val, y_val = x_val.to(device), y_val.to(device)
+                
+                y_val_pred = model(x_val)
+                val_loss = loss_fn(y_val_pred, y_val)
+                
+                epoch_val_loss += val_loss.item()
+                epoch_val_ssim += SSIM(y_val_pred.cpu().detach(), y_val.cpu().detach())
+                
+        avg_val_loss = epoch_val_loss / len(val_loader)
+        avg_val_ssim = epoch_val_ssim / len(val_loader)
+
+        # Update history
+        loss_history["train"].append(avg_train_loss)
+        loss_history["val"].append(avg_val_loss)
+        ssim_history["train"].append(avg_train_ssim)
+        ssim_history["val"].append(avg_val_ssim)
+
+        # Verbose
+        time_str = formatted_time(start_time)
+        print(
+            f"({time_str}) Epoch {epoch+1:03d}/{n_epochs} | "
+            f"Train Loss: {avg_train_loss:.4f} SSIM: {avg_train_ssim:.4f} | "
+            f"Val Loss: {avg_val_loss:.4f} SSIM: {avg_val_ssim:.4f}"
+        )
+
+        # Save Best Model Strategy (Migliore di save_each per evitare overfitting)
+        if weights_path is not None and avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            # Utilizza la tua funzione di salvataggio
+            save(model, weights_path)
+            print(f" -> Checkpoint saved! New best val loss: {best_val_loss:.4f}")
+            
+        # Optional period save 
+        elif save_each is not None and (epoch + 1) % save_each == 0:
+             # Modifica il nome per non sovrascrivere il best model
+             save(model, f"{weights_path}_epoch_{epoch+1}")
+
+    print("\nTraining completed!")
+    return {"loss": loss_history, "ssim": ssim_history}
+
+
+def save(model: nn.Module, weights_path: str):
+    # La tua funzione rimane identica
+    create_path_if_not_exists(weights_path)
+    model_config = get_config(model)
+    with open(f"{weights_path}/config.json", "w") as fp:
+        json.dump(model_config, fp, indent=2)
+    torch.save(model.state_dict(), f"{weights_path}/weights.pth")
+
+
+def load(weights_path: str):
+    # La tua funzione rimane identica
+    with open(f"{weights_path}/config.json") as fp:
+        model_config = json.load(fp)
+    model = UNet(**model_config)
+    model.load_state_dict(torch.load(f"{weights_path}/weights.pth", map_location="cpu"))
+    return model
+
+
+if __name__ == "__main__":
+    # --- PARSING DEGLI ARGOMENTI DA TERMINALE ---
+    parser = argparse.ArgumentParser(description="Train UNet for CT Reconstruction")
+    
+    # Parametro principale per automatizzare i dataset
+    parser.add_add_argument("--angle", type=str, required=True, 
+                        help="Angle configuration (e.g., 180, 090, 060, 045)")
+    
+    # Percorsi base (puoi personalizzarli o sovrascriverli)
+    parser.add_argument("--base_data_dir", type=str, default="data", help="Base directory for datasets")
+    parser.add_argument("--save_dir", type=str, default="checkpoints", help="Where to save models")
+    
+    # Iperparametri
+    parser.add_argument("--batch_size", type=int, default=8, help="Batch size")
+    parser.add_argument("--epochs", type=int, default=50, help="Number of epochs")
+    parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
+    
+    args = parser.parse_args()
+
+    # 1. Setup Device
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Using device: {device}")
+
+    # 2. Costruzione dei path automatici in base all'angolo
+    fbp_dir = os.path.join(args.base_data_dir, "fbp", f"angle_{args.angle}")
+    tv_dir = os.path.join(args.base_data_dir, "tv", f"angle_{args.angle}")
+    
+    weights_path = os.path.join(args.save_dir, f"unet_angle_{args.angle}")
+
+    print(f"Loading FBP input from: {fbp_dir}")
+    print(f"Loading TV target from: {tv_dir}")
+
+    #3. Creazione Dataloaders (Usa la funzione che hai creato per i pazienti)
+    train_loader, val_loader, test_loader = get_dataloaders_patient_wise(
+    fbp_dir=fbp_dir, tv_dir=tv_dir, batch_size=args.batch_size
+     )
+    
+    # 4. Inizializzazione Modello e Ottimizzatore
+    model = UNet(ch_in=1, ch_out=1).to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+
+    # 5. Avvio del Training
+    history = train(
+        model=model,
+        train_loader=train_loader, # Sostituisci con i tuoi loader effettivi
+        val_loader=val_loader,     # Sostituisci con i tuoi loader effettivi
+        optimizer=optimizer,
+        loss_fn=nn.L1Loss(), 
+        n_epochs=args.epochs,
+        weights_path=weights_path,
+        device=device
+    )
+    
+    # Salva la history in un file JSON per i tuoi grafici finali
+    with open(f"{weights_path}/history.json", "w") as f:
+        json.dump(history, f)
