@@ -20,5 +20,5 @@ __pycache__/
 data/raw
 
 #tutte le immagini
-*.png
-*.npy
+#*.png
+#*.npy
