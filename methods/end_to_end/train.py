@@ -15,12 +15,14 @@ import torch.nn as nn
 from torch.optim import Adam
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 from unet import UNet
 from dataset import get_dataloaders
 from losses import MixedLoss
 
 from ... evaluation.metrics import SSIM, PSNR
+from ... notebooks.ippy.operators import *
 from utilities import *
 from dataset import *
 
@@ -32,7 +34,7 @@ def train(
     train_loader: DataLoader,
     val_loader: DataLoader,
     optimizer: torch.optim.Optimizer,
-    loss_fn=nn.L1Loss(), 
+    loss_fn=nn.MSELoss(), 
     n_epochs: int = 50,
     save_each: int | None = None,
     weights_path: str | None = None,
@@ -54,21 +56,24 @@ def train(
         model.train()
         epoch_train_loss = 0.0
         epoch_train_ssim = 0.0
+        progress_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{n_epochs}")
         start_time = time.time()
         
-        for t, (x, y) in enumerate(train_loader):
-            x, y = x.to(device), y.to(device)
+        for t, (x_sino_noisy, x_tv) in enumerate(progress_bar, start=1):
+            x_sino_noisy, x_tv = x_sino_noisy.to(device), x_tv.to(device)
+            x_fbp = CTProjector.FBP(sino_dir)
 
             optimizer.zero_grad()
-            y_pred = model(x)
+            y_pred = model(x_sino_noisy)
+            
             
             # Calcolo Loss
-            loss = loss_fn(y_pred, y)
+            loss = loss_fn(y_pred, x_tv)
             loss.backward()
             optimizer.step()
 
             epoch_train_loss += loss.item()
-            epoch_train_ssim += SSIM(y_pred.cpu().detach(), y.cpu().detach())
+            epoch_train_ssim += SSIM(y_pred.cpu().detach(), x_tv.cpu().detach())
 
         avg_train_loss = epoch_train_loss / len(train_loader)
         avg_train_ssim = epoch_train_ssim / len(train_loader)
@@ -77,16 +82,17 @@ def train(
         model.eval()
         epoch_val_loss = 0.0
         epoch_val_ssim = 0.0
+        progress_bar_val = tqdm(val_loader, desc=f"Epoch {epoch+1}/{n_epochs}")
         
         with torch.no_grad():
-            for v, (x_val, y_val) in enumerate(val_loader):
-                x_val, y_val = x_val.to(device), y_val.to(device)
+            for v, (x_sino_noisy_val, x_tv_val) in enumerate(progress_bar_val, start=1):
+                x_sino_noisy_val, x_tv_val = x_sino_noisy_val.to(device), x_tv_val.to(device)
                 
-                y_val_pred = model(x_val)
-                val_loss = loss_fn(y_val_pred, y_val)
+                y_val_pred = model(x_sino_noisy_val, x_tv_val)
+                val_loss = loss_fn(y_val_pred, x_tv_val)
                 
                 epoch_val_loss += val_loss.item()
-                epoch_val_ssim += SSIM(y_val_pred.cpu().detach(), y_val.cpu().detach())
+                epoch_val_ssim += SSIM(y_val_pred.cpu().detach(), x_tv_val.cpu().detach())
                 
         avg_val_loss = epoch_val_loss / len(val_loader)
         avg_val_ssim = epoch_val_ssim / len(val_loader)
@@ -163,18 +169,20 @@ if __name__ == "__main__":
     print(f"Using device: {device}")
 
     # 2. Costruzione dei path automatici in base all'angolo
-    fbp_dir = os.path.join(args.base_data_dir, "fbp", f"angle_{args.angle}")
+    sino_dir = os.path.join(args.base_data_dir, "sino_noisy", f"angle_{args.angle}")
     tv_dir = os.path.join(args.base_data_dir, "tv", f"angle_{args.angle}")
     
     weights_path = os.path.join(args.save_dir, f"unet_angle_{args.angle}")
 
-    print(f"Loading FBP input from: {fbp_dir}")
+    print(f"Loading FBP input from: {sino_dir}")
     print(f"Loading TV target from: {tv_dir}")
 
     #3. Creazione Dataloaders (Usa la funzione che hai creato per i pazienti)
-    train_loader, val_loader, test_loader = get_dataloaders_patient_wise(
-    fbp_dir=fbp_dir, tv_dir=tv_dir, batch_size=args.batch_size
-     )
+    train_loader, val_loader, _ = get_dataloaders(
+        base_data_dir=args.base_data_dir, 
+        angle=args.angle, 
+        batch_size=args.batch_size
+    )
     
     # 4. Inizializzazione Modello e Ottimizzatore
     model = UNet(ch_in=1, ch_out=1).to(device)
@@ -183,10 +191,10 @@ if __name__ == "__main__":
     # 5. Avvio del Training
     history = train(
         model=model,
-        train_loader=train_loader, # Sostituisci con i tuoi loader effettivi
-        val_loader=val_loader,     # Sostituisci con i tuoi loader effettivi
+        train_loader=train_loader,
+        val_loader=val_loader,     
         optimizer=optimizer,
-        loss_fn=nn.L1Loss(), 
+        loss_fn=nn.MSELoss(), 
         n_epochs=args.epochs,
         weights_path=weights_path,
         device=device

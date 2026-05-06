@@ -1,22 +1,22 @@
 """
-Costruction of dataloader for end-to-end architecture for CT reconstruction of the Mayodataset
-images using TV images as targets.
+Costruction of dataloader for end-to-end architecture for CT reconstruction of the Mayo dataset
+using TV images as targets.
 
 Expected directory structure:
     data/
-        fbp/           <- FBP reconstructions  (input)
-            angle_180/
-                img_000.npy
-                ...
-            angle_090/
-            angle_060/
-            angle_045/
-        tv/            <- TV reconstructions   (target)
-            angle_180/
-            angle_090/
-            angle_060/
-            angle_045/
-
+        train/
+            sinograms/ 
+                angle_090/
+                    img_001.npy
+                    ...
+            tv/
+                angle_090/
+        val/
+            sinograms/
+            tv/
+        test/
+            sinograms/
+            tv/
 """
 
 import os
@@ -26,102 +26,81 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 import random
 
-class TrainDataset(Dataset): 
-    def __init__(self, fbp_files: list, tv_files: list, transform=None):
-        self.fbp_files = fbp_files
-        self.tv_files  = tv_files
-        self.transform = transform
+class CTDataset(Dataset): 
+    def __init__(self, input_dir: str, target_dir: str, is_train: bool = False):
+        """
+        Carica le coppie (input, target) leggendo tutti i file .npy nelle cartelle specificate.
+        is_train: se True, applica data augmentation per ridurre l'overfitting.
+        """
+        self.input_files = sorted(glob.glob(os.path.join(input_dir, "*.npy")))
+        self.target_files = sorted(glob.glob(os.path.join(target_dir, "*.npy")))
+        self.is_train = is_train
         
-        assert len(self.fbp_files) == len(self.tv_files), "Mismatch numero file!"
+        # Controlli di sicurezza
+        assert len(self.input_files) == len(self.target_files), \
+            f"Mismatch: trovati {len(self.input_files)} input e {len(self.target_files)} target in {input_dir}"
+        assert len(self.input_files) > 0, f"Nessun file .npy trovato in {input_dir}!"
 
     def __len__(self):
-        return len(self.fbp_files)
+        return len(self.input_files)
 
     def __getitem__(self, idx):
-        # Caricamento file binari (preserva i float32 della TV)
-        fbp = np.load(self.fbp_files[idx]) # (256, 256)
-        tv  = np.load(self.tv_files[idx])  # (256, 256)
+        # Caricamento file binari (preserva i float32 essenziali per la TV)
+        x = np.load(self.input_files[idx]).astype(np.float32)
+        y = np.load(self.target_files[idx]).astype(np.float32)
 
-        # Converti in tensori e aggiungi canale
-        fbp = torch.from_numpy(fbp).float().unsqueeze(0)
-        tv  = torch.from_numpy(tv).float().unsqueeze(0)
+        # Converti in tensori e aggiungi la dimensione del canale (1, 256, 256)
+        x = torch.from_numpy(x).unsqueeze(0)
+        y = torch.from_numpy(y).unsqueeze(0)
 
-        # Data Augmentation (Esempio veloce: Random Horizontal Flip)
-        if self.training: # Applica solo in fase di training
+        # Data Augmentation (solo durante il training)
+        if self.is_train: 
+            # 50% di probabilità di flip orizzontale
             if random.random() > 0.5:
-                fbp = torch.flip(fbp, [2])
-                tv  = torch.flip(tv, [2])
+                x = torch.flip(x, [2])
+                y = torch.flip(y, [2])
+                
+            # Puoi aggiungere anche il flip verticale per le CT, ha senso anatomicamente!
+            if random.random() > 0.5:
+                x = torch.flip(x, [1])
+                y = torch.flip(y, [1])
 
-        return fbp, tv
+        return x, y
 
-def get_dataloaders_patient_wise(fbp_dir, tv_dir, batch_size=8, seed=42):
-    fbp_all_files = sorted(glob.glob(os.path.join(fbp_dir, "*.npy")))
-    tv_all_files = sorted(glob.glob(os.path.join(tv_dir, "*.npy")))
-    
-    # 2. Raggruppa i file per Paziente (Dizionario: { "L067": [file1, file2...], ... })
-    patients_dict_fbp = {}
-    patients_dict_tv = {}
-    
-    for fbp_path, tv_path in zip(fbp_all_files, tv_all_files):
-        # Estrai il nome del file (es: "L067_slice001.npy")
-        filename = os.path.basename(fbp_path)
-        
-        # LOGICA DA ADATTARE: Come estraiamo l'ID? 
-        # Se i file sono separati da underscore, prendiamo la prima parte
-        patient_id = filename.split('_')[0] 
-        
-        if patient_id not in patients_dict_fbp:
-            patients_dict_fbp[patient_id] = []
-            patients_dict_tv[patient_id] = []
-            
-        patients_dict_fbp[patient_id].append(fbp_path)
-        patients_dict_tv[patient_id].append(tv_path)
 
-    # 3. Lista dei pazienti univoci
-    unique_patients = list(patients_dict_fbp.keys())
+def get_dataloaders(base_data_dir: str, angle: str, batch_size: int = 8):
+    """
+    Costruisce e restituisce direttamente i tre Dataloader.
+    base_data_dir: la cartella radice (es. 'data')
+    angle: l'angolo sotto forma di stringa (es. '090')
+    """
     
-    # Mischia la lista dei pazienti in modo riproducibile
-    random.seed(seed)
-    random.shuffle(unique_patients)
+    # 1. Costruisci i percorsi esatti per TRAIN
+    train_sino = os.path.join(base_data_dir, "train", "sinograms", f"angle_{angle}")
+    train_tv   = os.path.join(base_data_dir, "train", "tv", f"angle_{angle}")
     
-    # 4. Calcola quanti PAZIENTI (non quanti file) vanno in ogni split
-    n_patients = len(unique_patients)
-    n_val = max(1, int(n_patients * 0.15)) # Es. 15% per Validation
-    n_test = max(1, int(n_patients * 0.15)) # Es. 15% per Test
-    n_train = n_patients - n_val - n_test
+    # 2. Costruisci i percorsi esatti per VAL
+    val_sino = os.path.join(base_data_dir, "val", "sinograms", f"angle_{angle}")
+    val_tv   = os.path.join(base_data_dir, "val", "tv", f"angle_{angle}")
     
-    # Seleziona i pazienti per i vari set
-    train_patients = unique_patients[:n_train]
-    val_patients = unique_patients[n_train:n_train + n_val]
-    test_patients = unique_patients[-n_test:]
-    
-    print(f"Pazienti totali: {n_patients}")
-    print(f"Train Pazienti: {len(train_patients)} | Val Pazienti: {len(val_patients)} | Test Pazienti: {len(test_patients)}")
+    # 3. Costruisci i percorsi esatti per TEST
+    test_sino = os.path.join(base_data_dir, "test", "sinograms", f"angle_{angle}")
+    test_tv   = os.path.join(base_data_dir, "test", "tv", f"angle_{angle}")
 
-    # 5. Riempi le liste di file finali assemblando i pazienti scelti
-    train_fbp, train_tv = [], []
-    val_fbp, val_tv = [], []
-    test_fbp, test_tv = [], []
+    # 4. Inizializza i Dataset
+    # NOTA: is_train=True SOLO per il training set!
+    train_ds = CTDataset(train_sino, train_tv, is_train=True)
+    val_ds   = CTDataset(val_sino, val_tv, is_train=False)
+    test_ds  = CTDataset(test_sino, test_tv, is_train=False)
+
+    print(f"Dataset caricato (Angolo {angle}) -> Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)}")
+
+    # 5. Crea i DataLoader
+    # pin_memory=True velocizza il passaggio dei dati CPU -> GPU
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, pin_memory=True)
+    val_loader   = DataLoader(val_ds, batch_size=batch_size, shuffle=False, pin_memory=True)
     
-    for p in train_patients:
-        train_fbp.extend(patients_dict_fbp[p])
-        train_tv.extend(patients_dict_tv[p])
-        
-    for p in val_patients:
-        val_fbp.extend(patients_dict_fbp[p])
-        val_tv.extend(patients_dict_tv[p])
-        
-    for p in test_patients:
-        test_fbp.extend(patients_dict_fbp[p])
-        test_tv.extend(patients_dict_tv[p])
-
-    # 6. Crea i Dataset e i Dataloader
-    train_ds = TrainDataset(train_fbp, train_tv)
-    val_ds = TrainDataset(val_fbp, val_tv)
-    test_ds = TrainDataset(test_fbp, test_tv)
-
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
-    val_loader   = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
-    test_loader  = DataLoader(test_ds, batch_size=1, shuffle=False) # Batch 1 per il test finale
+    # Il test loader di solito ha batch_size=1 per fare calcoli più precisi in fase di inferenza
+    test_loader  = DataLoader(test_ds, batch_size=1, shuffle=False, pin_memory=True) 
 
     return train_loader, val_loader, test_loader
