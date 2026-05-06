@@ -242,7 +242,7 @@ class ChambollePockTpVConstrained:
             info["obj"][k] = 0.5 * res + lmbda * ftpv
 
             # Stopping criteria
-            c = math.sqrt(res) / (torch.max(y_delta) * math.sqrt(self.mx * self.my))
+            c = res.sqrt().item() / (torch.max(y_delta).item() * math.sqrt(self.mx * self.my))
             d_abs = torch.norm(x.flatten() - xtmp.flatten())
 
             if (c >= 9e-6) and (c <= 1.1e-5):
@@ -278,8 +278,9 @@ class ChambollePockTpVConstrained:
         info["iterations"] = k
         return x, info
 
-    def power_method(self, K, num_iterations: int):
-        b_k = torch.rand((1, 1, K.nx, K.ny))
+
+    def power_method(self, K, num_iterations: int, device=None):
+        b_k = torch.rand((1, 1, K.nx, K.ny), device=device)
 
         for _ in range(num_iterations):
             # calculate the matrix-by-vector product Ab
@@ -293,8 +294,8 @@ class ChambollePockTpVConstrained:
 
         return b_k1_norm
 
-    def power_method_dual_operator(self, K, D, num_iterations: int):
-        b_k = torch.rand((1, 1, K.nx, K.ny))
+    def power_method_dual_operator(self, K, D, num_iterations: int, device=None):
+        b_k = torch.rand((1, 1, K.nx, K.ny), device=device)
 
         for _ in range(num_iterations):
             # calculate the matrix-by-vector product Ab
@@ -339,6 +340,8 @@ class ChambollePockTpVUnconstrained:
         starting_point: torch.Tensor | None = None,
         eta: float = 2e-3,
         maxiter: int = 100,
+        tolf: float = 1e-6,
+        tolx: float = 1e-6,
         p: int = 1,
         verbose: bool = False,
         *args,
@@ -354,14 +357,14 @@ class ChambollePockTpVUnconstrained:
         L : norm of the operator [P, Lambda*grad] (see power_method)
         maxit : number of iterations
         """
-        # Compute the approximation to || K ||_2
-        nu = math.sqrt(
-            self.power_method(self.K, num_iterations=10)
-            / self.power_method(self.grad, num_iterations=10)
-        )
+        device = y_delta.device  # ← aggiungi
 
+        nu = math.sqrt(
+            self.power_method(self.K, num_iterations=10, device=device)
+            / self.power_method(self.grad, num_iterations=10, device=device)
+        )
         Gamma = math.sqrt(
-            self.power_method_dual_operator(self.K, self.grad, num_iterations=10)
+            self.power_method_dual_operator(self.K, self.grad, num_iterations=10, device=device)
         )
 
         # Compute the parameters given Gamma
@@ -373,23 +376,25 @@ class ChambollePockTpVUnconstrained:
         k = 0
 
         # Initialization
+        device = y_delta.device  # ← aggiungi questa riga all'inizio
+
+        # Initialization
         if starting_point is None or starting_point == [None]:
-            x = torch.zeros((1, 1, self.nx, self.ny))
-        else:
-            x = starting_point
-        y = torch.zeros((1, 1, self.mx, self.my))
-        w = torch.zeros((1, 2, self.nx, self.ny))
+            x = torch.zeros((1, 1, self.nx, self.ny), device=device)
+        y = torch.zeros((1, 1, self.mx, self.my), device=device)
+        w = torch.zeros((1, 2, self.nx, self.ny), device=device)
+
 
         xx = x
 
         # Initialize infos
         info = dict()
-        info["residues"] = torch.zeros((maxiter + 1, 1))
-        info["obj"] = torch.zeros((maxiter + 1, 1))
-        info["RE"] = torch.zeros((maxiter + 1, 1))
-        info["RMSE"] = torch.zeros((maxiter + 1, 1))
-        info["PSNR"] = torch.zeros((maxiter + 1, 1))
-        info["SSIM"] = torch.zeros((maxiter + 1, 1))
+        info["residues"] = torch.zeros((maxiter + 1, 1), device=device)
+        info["obj"]      = torch.zeros((maxiter + 1, 1), device=device)
+        info["RE"]       = torch.zeros((maxiter + 1, 1), device=device)
+        info["RMSE"]     = torch.zeros((maxiter + 1, 1), device=device)
+        info["PSNR"]     = torch.zeros((maxiter + 1, 1), device=device)
+        info["SSIM"]     = torch.zeros((maxiter + 1, 1), device=device)
         info["iterations"] = 0
 
         # Stopping conditions
@@ -397,7 +402,7 @@ class ChambollePockTpVUnconstrained:
         con = True
         while con and (k < maxiter):
             # Update y
-            y = (y + sigma * (self.K(xx) - y_delta)) / (1 + lmbda * sigma)
+            y = (y + sigma * (self.K(xx) - y_delta)) / (1 + sigma)
 
             # Compute the magnitude of the gradient
             grad_x = self.grad(xx)
@@ -411,7 +416,7 @@ class ChambollePockTpVUnconstrained:
             x_grad = self.grad(xx)
             ww = w + sigma * x_grad
 
-            abs_ww = torch.square(ww[:, 0:1]) + torch.square(ww[:, 1:2])
+            abs_ww = torch.sqrt(torch.square(ww[:, 0:1]) + torch.square(ww[:, 1:2]))
             abs_ww = torch.cat((abs_ww, abs_ww), dim=1)
 
             lmbda_vec_over_nu = lmbda * WW / nu
@@ -451,13 +456,15 @@ class ChambollePockTpVUnconstrained:
             info["obj"][k] = 0.5 * res + lmbda * ftpv
 
             # Stopping criteria
-            c = math.sqrt(res) / (torch.max(y_delta) * math.sqrt(self.mx * self.my))
+            norm_res = res.sqrt().item() / (
+                torch.max(y_delta).item() * math.sqrt(self.mx * self.my) + 1e-8
+            )
             d_abs = torch.norm(x.flatten() - xtmp.flatten())
 
-            if (c >= 9e-6) and (c <= 1.1e-5):
+            if norm_res <= tolf:
                 con = False
 
-            if d_abs < 1e-3 * (1 + torch.norm(xtmp.flatten())):
+            if d_abs < tolx * (1e-6 + torch.norm(xtmp.flatten())):
                 con = False
 
             # Update k
@@ -487,8 +494,8 @@ class ChambollePockTpVUnconstrained:
         info["iterations"] = k
         return x, info
 
-    def power_method(self, K, num_iterations: int):
-        b_k = torch.rand((1, 1, K.nx, K.ny))
+    def power_method(self, K, num_iterations: int, device=None):
+        b_k = torch.rand((1, 1, K.nx, K.ny), device=device)
 
         for _ in range(num_iterations):
             # calculate the matrix-by-vector product Ab
@@ -502,8 +509,8 @@ class ChambollePockTpVUnconstrained:
 
         return b_k1_norm
 
-    def power_method_dual_operator(self, K, D, num_iterations: int):
-        b_k = torch.rand((1, 1, K.nx, K.ny))
+    def power_method_dual_operator(self, K, D, num_iterations: int, device=None):
+        b_k = torch.rand((1, 1, K.nx, K.ny), device=device)
 
         for _ in range(num_iterations):
             # calculate the matrix-by-vector product Ab

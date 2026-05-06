@@ -75,7 +75,6 @@ def PSNR(x_pred: torch.Tensor, x_true: torch.Tensor) -> float:
     return -20 * math.log10(math.sqrt(mse))
 
 
-@average_on_batch
 def RMSE(x_pred: torch.Tensor, x_true: torch.Tensor) -> float:
     r"""
     Compute the Root Mean Squared Error (RMSE) between the two input tensors x_pred and x_true.
