@@ -22,7 +22,3 @@ data/raw
 #tutte le immagini
 #*.png
 #*.npy
-
-#messo per poter uploadare tutte le immagini reco: 
-/data/reco/angles_180
-
