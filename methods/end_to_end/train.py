@@ -88,7 +88,7 @@ def train(
             for v, (x_sino_noisy_val, x_tv_val) in enumerate(progress_bar_val, start=1):
                 x_sino_noisy_val, x_tv_val = x_sino_noisy_val.to(device), x_tv_val.to(device)
                 
-                y_val_pred = model(x_sino_noisy_val, x_tv_val)
+                y_val_pred = model(x_sino_noisy_val)
                 val_loss = loss_fn(y_val_pred, x_tv_val)
                 
                 epoch_val_loss += val_loss.item()
@@ -150,7 +150,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train UNet for CT Reconstruction")
     
     # Parametro principale per automatizzare i dataset
-    parser.add_add_argument("--angle", type=str, required=True, 
+    parser.add_argument("--angle", type=str, required=True, 
                         help="Angle configuration (e.g., 180, 090, 060, 045)")
     
     # Percorsi base (puoi personalizzarli o sovrascriverli)

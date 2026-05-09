@@ -18,6 +18,10 @@ __pycache__/
 
 # Dataset
 data/raw
+data/dataset
+data/preprocessed
+data/sinogram_clean
+data/sinogram_corrupted
 
 #tutte le immagini
 *.png
