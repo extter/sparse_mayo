@@ -22,7 +22,9 @@ data/dataset
 data/preprocessed
 data/sinogram_clean
 data/sinogram_corrupted
+data/reco
+data/lamda_choice
 
 #tutte le immagini
-#*.png
-#*.npy
+*.png
+*.npy
