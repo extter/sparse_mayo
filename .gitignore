@@ -17,13 +17,13 @@ __pycache__/
 .ipynb_checkpoints/
 
 # Dataset
-data/raw
-data/dataset
-data/preprocessed
-data/sinogram_clean
-data/sinogram_corrupted
-data/reco
-data/lamda_choice
+data/raw/
+data/dataset/
+data/preprocessed/
+data/sinogram_clean/
+data/sinogram_corrupted/
+data/reco/
+data/lamda_choice/
 
 #tutte le immagini
 *.png

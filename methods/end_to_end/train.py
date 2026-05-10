@@ -34,7 +34,8 @@ def train(
     train_loader: DataLoader,
     val_loader: DataLoader,
     optimizer: torch.optim.Optimizer,
-    loss_fn=nn.MSELoss(), 
+    loss_fn=nn.MSELoss(),
+    projector: object = None,
     n_epochs: int = 50,
     save_each: int | None = None,
     weights_path: str | None = None,
@@ -61,10 +62,10 @@ def train(
         
         for t, (x_sino_noisy, x_tv) in enumerate(progress_bar, start=1):
             x_sino_noisy, x_tv = x_sino_noisy.to(device), x_tv.to(device)
-            x_fbp = CTProjector.FBP(sino_dir)
+            x_fbp = projector.FBP(x_sino_noisy)
 
             optimizer.zero_grad()
-            y_pred = model(x_sino_noisy)
+            y_pred = model(x_fbp)
             
             
             # Calcolo Loss
@@ -183,6 +184,10 @@ if __name__ == "__main__":
         angle=args.angle, 
         batch_size=args.batch_size
     )
+
+    n_angles = int(args.angle)
+    angles_array = np.linspace(0, np.pi, n_angles, endpoint=False)
+    projector = CTProjector(img_shape=(256, 256), angles=angles_array, force_cpu=False)
     
     # 4. Inizializzazione Modello e Ottimizzatore
     model = UNet(ch_in=1, ch_out=1).to(device)
@@ -195,6 +200,8 @@ if __name__ == "__main__":
         val_loader=val_loader,     
         optimizer=optimizer,
         loss_fn=nn.MSELoss(), 
+        projector=projector,
+        save_each=5,
         n_epochs=args.epochs,
         weights_path=weights_path,
         device=device
