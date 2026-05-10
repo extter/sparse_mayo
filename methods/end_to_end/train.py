@@ -88,8 +88,10 @@ def train(
         with torch.no_grad():
             for v, (x_sino_noisy_val, x_tv_val) in enumerate(progress_bar_val, start=1):
                 x_sino_noisy_val, x_tv_val = x_sino_noisy_val.to(device), x_tv_val.to(device)
+
+                x_fbp_val = projector.FBP(x_sino_noisy_val)
                 
-                y_val_pred = model(x_sino_noisy_val)
+                y_val_pred = model(x_fbp_val)
                 val_loss = loss_fn(y_val_pred, x_tv_val)
                 
                 epoch_val_loss += val_loss.item()
