@@ -10,6 +10,12 @@ import os
 import time 
 import json 
 
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+
 import torch 
 import torch.nn as nn
 from torch.optim import Adam
@@ -22,8 +28,8 @@ from dataset import get_dataloaders
 
 from ... evaluation.metrics import SSIM, PSNR
 from ... notebooks.ippy.operators import *
-from utilities import formatted_time, create_path_if_not_exists, get_config
-from dataset import get_dataloaders
+from utilities import *
+from dataset import *
 from losses import MixedLoss
 
 
@@ -66,9 +72,7 @@ def train(
         
         for t, (x_sino_noisy, x_tv) in enumerate(progress_bar, start=1):
             x_sino_noisy, x_tv = x_sino_noisy.to(device), x_tv.to(device)
-            
-            with torch.no_grad():
-                x_fbp = projector.FBP(x_sino_noisy)
+            x_fbp = projector.FBP(x_sino_noisy)
 
             optimizer.zero_grad()
             y_pred = model(x_fbp)
@@ -175,7 +179,7 @@ if __name__ == "__main__":
     parser.add_argument("--save_dir", type=str, default="checkpoints", help="Where to save models")
     
     # Iperparametri
-    parser.add_argument("--batch_size", type=int, default=8, help="Batch size")
+    parser.add_argument("--batch_size", type=int, default=4, help="Batch size")
     parser.add_argument("--epochs", type=int, default=50, help="Number of epochs")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
     
@@ -200,7 +204,7 @@ if __name__ == "__main__":
 
     n_angles = int(args.angle)
     angles_array = np.linspace(0, np.pi, n_angles, endpoint=False)
-    projector = CTProjector(img_shape=(256, 256), angles=angles_array, force_cpu=False)
+    projector = CTProjector(img_shape=(256, 256), det_size=256, angles=angles_array, force_cpu=False)
     
     # 4. Inizializzazione Modello e Ottimizzatore
     model = UNet(ch_in=1, ch_out=1).to(device)
@@ -213,7 +217,7 @@ if __name__ == "__main__":
         train_loader=train_loader,
         val_loader=val_loader,     
         optimizer=optimizer,
-        loss_fn=MixedLoss(), 
+        loss_fn=nn.MSELoss(), 
         projector=projector,
         scheduler=scheduler,
         save_each=5,
