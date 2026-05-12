@@ -10,6 +10,12 @@ import os
 import time 
 import json 
 
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+
 import torch 
 import torch.nn as nn
 from torch.optim import Adam
@@ -21,8 +27,8 @@ from unet import UNet
 from dataset import get_dataloaders
 from losses import MixedLoss
 
-from ... evaluation.metrics import SSIM, PSNR
-from ... notebooks.ippy.operators import *
+from evaluation.metrics import SSIM, PSNR
+from notebooks.ippy.operators import *
 from utilities import *
 from dataset import *
 
