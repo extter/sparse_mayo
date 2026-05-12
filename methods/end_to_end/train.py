@@ -70,6 +70,7 @@ def train(
         
         for t, (x_sino_noisy, x_tv) in enumerate(progress_bar, start=1):
             x_sino_noisy, x_tv = x_sino_noisy.to(device), x_tv.to(device)
+
             x_fbp = projector.FBP(x_sino_noisy)
 
             optimizer.zero_grad()
@@ -169,7 +170,7 @@ if __name__ == "__main__":
     parser.add_argument("--save_dir", type=str, default="checkpoints", help="Where to save models")
     
     # Iperparametri
-    parser.add_argument("--batch_size", type=int, default=8, help="Batch size")
+    parser.add_argument("--batch_size", type=int, default=4, help="Batch size")
     parser.add_argument("--epochs", type=int, default=50, help="Number of epochs")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
     
@@ -197,7 +198,7 @@ if __name__ == "__main__":
 
     n_angles = int(args.angle)
     angles_array = np.linspace(0, np.pi, n_angles, endpoint=False)
-    projector = CTProjector(img_shape=(256, 256), angles=angles_array, force_cpu=False)
+    projector = CTProjector(img_shape=(256, 256), det_size=256, angles=angles_array, force_cpu=False)
     
     # 4. Inizializzazione Modello e Ottimizzatore
     model = UNet(ch_in=1, ch_out=1).to(device)
@@ -209,7 +210,7 @@ if __name__ == "__main__":
         train_loader=train_loader,
         val_loader=val_loader,     
         optimizer=optimizer,
-        loss_fn=MixedLoss(), 
+        loss_fn=nn.MSELoss(), 
         projector=projector,
         save_each=5,
         n_epochs=args.epochs,

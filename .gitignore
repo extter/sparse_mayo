@@ -28,3 +28,6 @@ data/lamda_choice/
 #tutte le immagini
 *.png
 *.npy
+
+#tutti i weights
+*.pth
