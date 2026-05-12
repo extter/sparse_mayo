@@ -27,18 +27,24 @@ from torch.utils.data import Dataset, DataLoader
 import random
 
 class CTDataset(Dataset): 
-    def __init__(self, input_dir: str, target_dir: str, is_train: bool = False):
+    def __init__(self, input_dir: str, target_dir: str):
         """
         Carica le coppie (input, target) leggendo tutti i file .npy nelle cartelle specificate.
-        is_train: se True, applica data augmentation per ridurre l'overfitting.
         """
-        self.input_files = sorted(glob.glob(os.path.join(input_dir, "*.npy")))
-        self.target_files = sorted(glob.glob(os.path.join(target_dir, "*.npy")))
-        self.is_train = is_train
+        input_paths = sorted(glob.glob(os.path.join(input_dir, "*.npy")))
+        self.input_files = []
+        self.target_files = []
         
-        # Controlli di sicurezza
-        assert len(self.input_files) == len(self.target_files), \
-            f"Mismatch: trovati {len(self.input_files)} input e {len(self.target_files)} target in {input_dir}"
+        # Appaiamento sicuro dei file tramite basename
+        for f_path in input_paths:
+            basename = os.path.basename(f_path)
+            target_path = os.path.join(target_dir, basename)
+            if os.path.exists(target_path):
+                self.input_files.append(f_path)
+                self.target_files.append(target_path)
+            else:
+                print(f"Warning: File target mancante per {basename}. Verrà ignorato.")
+
         assert len(self.input_files) > 0, f"Nessun file .npy trovato in {input_dir}!"
 
     def __len__(self):
@@ -53,22 +59,10 @@ class CTDataset(Dataset):
         x = torch.from_numpy(x).unsqueeze(0)
         y = torch.from_numpy(y).unsqueeze(0)
 
-        # Data Augmentation (solo durante il training)
-        if self.is_train: 
-            # 50% di probabilità di flip orizzontale
-            if random.random() > 0.5:
-                x = torch.flip(x, [2])
-                y = torch.flip(y, [2])
-                
-            # Puoi aggiungere anche il flip verticale per le CT, ha senso anatomicamente!
-            if random.random() > 0.5:
-                x = torch.flip(x, [1])
-                y = torch.flip(y, [1])
-
         return x, y
 
 
-def get_dataloaders(base_data_dir: str, angle: str, batch_size: int = 8):
+def get_dataloaders(base_data_dir: str, angle: str, batch_size: int = 8, num_workers: int = 4):
     """
     Costruisce e restituisce direttamente i tre Dataloader.
     base_data_dir: la cartella radice (es. 'data')
@@ -88,19 +82,18 @@ def get_dataloaders(base_data_dir: str, angle: str, batch_size: int = 8):
     test_tv   = os.path.join(base_data_dir, "test", "tv", f"angle_{angle}")
 
     # 4. Inizializza i Dataset
-    # NOTA: is_train=True SOLO per il training set!
-    train_ds = CTDataset(train_sino, train_tv, is_train=True)
-    val_ds   = CTDataset(val_sino, val_tv, is_train=False)
-    test_ds  = CTDataset(test_sino, test_tv, is_train=False)
+    train_ds = CTDataset(train_sino, train_tv)
+    val_ds   = CTDataset(val_sino, val_tv)
+    test_ds  = CTDataset(test_sino, test_tv)
 
     print(f"Dataset caricato (Angolo {angle}) -> Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)}")
 
     # 5. Crea i DataLoader
     # pin_memory=True velocizza il passaggio dei dati CPU -> GPU
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, pin_memory=True)
-    val_loader   = DataLoader(val_ds, batch_size=batch_size, shuffle=False, pin_memory=True)
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, pin_memory=True, num_workers=num_workers)
+    val_loader   = DataLoader(val_ds, batch_size=batch_size, shuffle=False, pin_memory=True, num_workers=num_workers)
     
     # Il test loader di solito ha batch_size=1 per fare calcoli più precisi in fase di inferenza
-    test_loader  = DataLoader(test_ds, batch_size=1, shuffle=False, pin_memory=True) 
+    test_loader  = DataLoader(test_ds, batch_size=1, shuffle=False, pin_memory=True, num_workers=num_workers) 
 
     return train_loader, val_loader, test_loader

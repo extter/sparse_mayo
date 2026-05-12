@@ -31,7 +31,7 @@ class UNet(nn.Module):
         self,
         ch_in: int = 1,
         ch_out: int = 1,
-        middle_ch: tuple[int] = [64, 128, 256, 512, 1024],
+        middle_ch: tuple[int] = (64, 128, 256, 512, 1024),
         n_layers_per_block: int = 2,
         down_layers: tuple[str] = (
             "ResDownBlock",
@@ -120,7 +120,7 @@ class UNet(nn.Module):
 
         if self.final_activation is not None:
             if self.final_activation.lower() == "sigmoid":
-                return nn.Sigmoid()(self.postprocess(h))
+                return torch.sigmoid(self.postprocess(h))
             elif self.final_activation.lower() == "relu":
-                return nn.ReLU()(self.postprocess(h))
+                return torch.relu(self.postprocess(h))
         return self.postprocess(h)

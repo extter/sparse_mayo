@@ -22,8 +22,8 @@ from dataset import get_dataloaders
 
 from ... evaluation.metrics import SSIM, PSNR
 from ... notebooks.ippy.operators import *
-from utilities import *
-from dataset import *
+from utilities import formatted_time, create_path_if_not_exists, get_config
+from dataset import get_dataloaders
 from losses import MixedLoss
 
 
@@ -38,6 +38,7 @@ def train(
     optimizer: torch.optim.Optimizer,
     loss_fn,
     projector: object = None,
+    scheduler: object = None,
     n_epochs: int = 50,
     save_each: int | None = None,
     weights_path: str | None = None,
@@ -53,6 +54,7 @@ def train(
     ssim_history = {"train": [], "val": []}
     
     best_val_loss = float('inf')
+    scaler = torch.cuda.amp.GradScaler(enabled=(device == "cuda"))
 
     for epoch in range(n_epochs):
         
@@ -64,19 +66,24 @@ def train(
         
         for t, (x_sino_noisy, x_tv) in enumerate(progress_bar, start=1):
             x_sino_noisy, x_tv = x_sino_noisy.to(device), x_tv.to(device)
-            x_fbp = projector.FBP(x_sino_noisy)
+            
+            with torch.no_grad():
+                x_fbp = projector.FBP(x_sino_noisy)
 
             optimizer.zero_grad()
             y_pred = model(x_fbp)
             
-            
-            # Calcolo Loss
-            loss = loss_fn(y_pred, x_tv)
-            loss.backward()
-            optimizer.step()
+            with torch.cuda.amp.autocast(enabled=(device == "cuda")):
+                y_pred = model(x_fbp)
+                loss = loss_fn(y_pred, x_tv)
+                
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
 
             epoch_train_loss += loss.item()
-            epoch_train_ssim += SSIM(y_pred.cpu().detach(), x_tv.cpu().detach())
+            ssim_val = SSIM(y_pred.detach(), x_tv.detach())
+            epoch_train_ssim += ssim_val.item() if hasattr(ssim_val, "item") else ssim_val
 
         avg_train_loss = epoch_train_loss / len(train_loader)
         avg_train_ssim = epoch_train_ssim / len(train_loader)
@@ -93,11 +100,13 @@ def train(
 
                 x_fbp_val = projector.FBP(x_sino_noisy_val)
                 
-                y_val_pred = model(x_fbp_val)
-                val_loss = loss_fn(y_val_pred, x_tv_val)
-                
+                with torch.cuda.amp.autocast(enabled=(device == "cuda")):
+                    y_val_pred = model(x_fbp_val)
+                    val_loss = loss_fn(y_val_pred, x_tv_val)
+                    
                 epoch_val_loss += val_loss.item()
-                epoch_val_ssim += SSIM(y_val_pred.cpu().detach(), x_tv_val.cpu().detach())
+                ssim_val = SSIM(y_val_pred.detach(), x_tv_val.detach())
+                epoch_val_ssim += ssim_val.item() if hasattr(ssim_val, "item") else ssim_val
                 
         avg_val_loss = epoch_val_loss / len(val_loader)
         avg_val_ssim = epoch_val_ssim / len(val_loader)
@@ -107,6 +116,9 @@ def train(
         loss_history["val"].append(avg_val_loss)
         ssim_history["train"].append(avg_train_ssim)
         ssim_history["val"].append(avg_val_ssim)
+        
+        if scheduler is not None:
+            scheduler.step()
 
         # Verbose
         time_str = formatted_time(start_time)
@@ -174,15 +186,12 @@ if __name__ == "__main__":
     print(f"Using device: {device}")
 
     # 2. Costruzione dei path automatici in base all'angolo
-    sino_dir = os.path.join(args.base_data_dir, "sino_noisy", f"angle_{args.angle}")
-    tv_dir = os.path.join(args.base_data_dir, "tv", f"angle_{args.angle}")
-    
     weights_path = os.path.join(args.save_dir, f"unet_angle_{args.angle}")
 
-    print(f"Loading FBP input from: {sino_dir}")
-    print(f"Loading TV target from: {tv_dir}")
+    print(f"Starting training configuration for angle {args.angle}")
+    print(f"Model checkpoints will be saved in: {weights_path}")
 
-    #3. Creazione Dataloaders (Usa la funzione che hai creato per i pazienti)
+    # 3. Creazione Dataloaders (Usa la funzione che hai creato per i pazienti)
     train_loader, val_loader, _ = get_dataloaders(
         base_data_dir=args.base_data_dir, 
         angle=args.angle, 
@@ -196,6 +205,7 @@ if __name__ == "__main__":
     # 4. Inizializzazione Modello e Ottimizzatore
     model = UNet(ch_in=1, ch_out=1).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs)
 
     # 5. Avvio del Training
     history = train(
@@ -205,6 +215,7 @@ if __name__ == "__main__":
         optimizer=optimizer,
         loss_fn=MixedLoss(), 
         projector=projector,
+        scheduler=scheduler,
         save_each=5,
         n_epochs=args.epochs,
         weights_path=weights_path,
