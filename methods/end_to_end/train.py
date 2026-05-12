@@ -19,12 +19,14 @@ from tqdm import tqdm
 
 from unet import UNet
 from dataset import get_dataloaders
-from losses import MixedLoss
 
 from ... evaluation.metrics import SSIM, PSNR
 from ... notebooks.ippy.operators import *
 from utilities import *
 from dataset import *
+from losses import MixedLoss
+
+
 
 
 
@@ -34,7 +36,7 @@ def train(
     train_loader: DataLoader,
     val_loader: DataLoader,
     optimizer: torch.optim.Optimizer,
-    loss_fn=nn.MSELoss(),
+    loss_fn,
     projector: object = None,
     n_epochs: int = 50,
     save_each: int | None = None,
@@ -201,7 +203,7 @@ if __name__ == "__main__":
         train_loader=train_loader,
         val_loader=val_loader,     
         optimizer=optimizer,
-        loss_fn=nn.MSELoss(), 
+        loss_fn=MixedLoss(), 
         projector=projector,
         save_each=5,
         n_epochs=args.epochs,

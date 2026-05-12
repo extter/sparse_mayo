@@ -1,27 +1,31 @@
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
-
+from pytorch_msssim import SSIM
 
 class MixedLoss(nn.Module):
-    """L1 + SSIM-proxy (MS-SSIM via pytorch_msssim if available, else L1 only)."""
-    def __init__(self, alpha=0.8):
+    def __init__(self, w_ssim = 0.8, w_l1 = 0.15, w_MSE = 0.05):
         super().__init__()
-        self.alpha = alpha
-        self.l1 = nn.L1Loss()
-        try:
-            from pytorch_msssim import SSIM
-            self.ssim_loss = SSIM(data_range=1.0, size_average=True, channel=1)
-            self.use_ssim = True
-            print("[Loss] Using L1 + SSIM")
-        except ImportError:
-            self.use_ssim = False
-            print("[Loss] pytorch_msssim not found — using L1 only")
- 
+        self.w_ssim = w_ssim
+        self.w_l1 = w_l1
+        self.w_MSE = w_MSE
+
     def forward(self, pred, target):
-        l1 = self.l1(pred, target)
-        if self.use_ssim:
-            ssim_val = self.ssim_loss(pred, target)
-            return self.alpha * l1 + (1 - self.alpha) * (1 - ssim_val)
-        return l1
+        ssim_loss = 1 -SSIM(data_range=1, size_average=True)(pred, target)
+        l1_loss = F.l1_loss(pred, target)
+        MSE_loss = F.mse_loss(pred, target)
+
+        return self.w_ssim * ssim_loss + self.w_l1 * l1_loss + self.w_MSE * MSE_loss
+
+
+
+
+
+
+
+
+
+
+    
