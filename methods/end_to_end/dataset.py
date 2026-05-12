@@ -3,20 +3,20 @@ Costruction of dataloader for end-to-end architecture for CT reconstruction of t
 using TV images as targets.
 
 Expected directory structure:
-    data/
-        train/
-            sinograms/ 
-                angle_090/
-                    img_001.npy
-                    ...
-            tv/
-                angle_090/
-        val/
-            sinograms/
-            tv/
-        test/
-            sinograms/
-            tv/
+    data/nn_dataset/
+                     train/
+                        sinograms/ 
+                            angle_090/
+                                img_001.npy
+                                ...
+                        tv/
+                            angle_090/
+                     val/
+                        sinograms/
+                        tv/
+                     test/
+                        sinograms/
+                        tv/
 """
 
 import os
